@@ -1,6 +1,6 @@
 # Twitch Song Request System
 
-A complete song request system for Twitch streams with Spotify integration, Channel Points support, and a beautiful OBS overlay.
+A complete song request system for Twitch streams with Spotify integration, Channel Points support, and a transparent OBS overlay.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
