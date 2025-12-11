@@ -1,0 +1,495 @@
+/* =============================================================================
+   TWITCH SONG REQUEST OVERLAY
+   Style: Soft Pastel Spotify-style with Pink Gradients
+   ============================================================================= */
+
+/* === CSS Custom Properties === */
+:root {
+    --overlay-width: 450px;
+    --overlay-height: 160px;
+    --album-size: 80px;
+
+    /* Soft Pastel Colors */
+    --bg-primary: rgba(30, 20, 40, 0.75);
+    --bg-glow: radial-gradient(ellipse at 50% 50%, rgba(255, 150, 200, 0.15) 0%, transparent 70%);
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.85);
+    --text-muted: rgba(255, 255, 255, 0.6);
+
+    /* Pink/Pastel Accent Colors */
+    --accent-pink: #ff6b9d;
+    --accent-pink-light: #ffa4c4;
+    --accent-purple: #b388ff;
+    --gradient-pink: linear-gradient(90deg, #ff6b9d 0%, #ffa4c4 50%, #ffb6d3 100%);
+    --gradient-glow: linear-gradient(135deg, #ff6b9d 0%, #b388ff 100%);
+
+    /* Progress bar */
+    --progress-bg: rgba(255, 255, 255, 0.15);
+    --progress-fill: var(--gradient-pink);
+
+    /* Votes */
+    --like-color: #ff6b9d;
+    --skip-color: rgba(255, 255, 255, 0.5);
+
+    /* Glass effect */
+    --glass-blur: 25px;
+    --glass-border: 1px solid rgba(255, 150, 200, 0.2);
+
+    /* Animation timings */
+    --transition-fast: 0.2s ease;
+    --transition-medium: 0.4s ease;
+    --transition-slow: 0.6s ease;
+
+    /* Shadows */
+    --shadow-glow: 0 0 40px rgba(255, 107, 157, 0.3);
+    --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* === Reset and Base === */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+    background: transparent;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* === Main Container === */
+#overlay-container {
+    width: var(--overlay-width);
+    height: var(--overlay-height);
+    background: var(--bg-primary);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--glass-border);
+    border-radius: 16px;
+    padding: 6px 12px 5px 12px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: var(--shadow-soft), var(--shadow-glow);
+    overflow: hidden;
+}
+
+/* Glowing background effect */
+#overlay-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-glow);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* === Now Playing Section === */
+.now-playing {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    text-align: left;
+    flex: 1;
+    position: relative;
+    z-index: 1;
+    gap: 12px;
+}
+
+/* === Album Art === */
+.album-art-container {
+    position: relative;
+    flex-shrink: 0;
+}
+
+#album-art {
+    width: var(--album-size);
+    height: var(--album-size);
+    border-radius: 14px;
+    object-fit: cover;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 20px rgba(255, 107, 157, 0.2);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+#album-art:hover {
+    transform: scale(1.03);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 30px rgba(255, 107, 157, 0.3);
+}
+
+/* Heart play button overlay */
+.play-button {
+    position: absolute;
+    bottom: -6px;
+    right: -6px;
+    width: 28px;
+    height: 28px;
+    background: var(--gradient-glow);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(255, 107, 157, 0.5);
+    cursor: pointer;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.play-button::before {
+    content: '♥';
+    font-size: 14px;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.play-button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(255, 107, 157, 0.6);
+}
+
+/* === Song Info === */
+.song-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.song-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    line-height: 1.1;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.artist-name {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    line-height: 1.3;
+}
+
+/* === Requester Info (under votes) === */
+.requester {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.requester-label {
+    opacity: 0.7;
+    color: var(--text-muted);
+}
+
+.requester-name {
+    color: var(--accent-pink-light);
+    font-weight: 500;
+}
+
+/* === Progress Bar === */
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    max-width: 300px;
+    margin-top: 1px;
+}
+
+.time-current {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    min-width: 32px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--progress-bg);
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 0%;
+    background: var(--gradient-pink);
+    border-radius: 2px;
+    transition: width 1s linear;
+    box-shadow: 0 0 10px rgba(255, 107, 157, 0.5);
+}
+
+.time-remaining {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    min-width: 32px;
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+}
+
+/* === Votes Section (contains votes + requester) === */
+.votes-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0px;
+    margin-top: 1px;
+}
+
+/* === Votes === */
+.votes {
+    display: flex;
+    gap: 16px;
+}
+
+.vote-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 1rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+    transition: transform var(--transition-fast);
+}
+
+.vote-item.like {
+    color: var(--like-color);
+}
+
+.vote-item.like .vote-icon {
+    filter: drop-shadow(0 0 4px rgba(255, 107, 157, 0.5));
+}
+
+.vote-item.skip {
+    color: var(--skip-color);
+}
+
+.vote-icon {
+    font-size: 1.1rem;
+}
+
+.vote-count {
+    font-variant-numeric: tabular-nums;
+}
+
+/* === Up Next Section === */
+.up-next {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 150, 200, 0.15);
+    padding: 4px 10px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 3px;
+    position: relative;
+    z-index: 1;
+    transition: opacity var(--transition-medium), transform var(--transition-medium);
+}
+
+.up-next.hidden {
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    height: 0;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+}
+
+.up-next-label {
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: var(--accent-pink);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    text-shadow: 0 0 10px rgba(255, 107, 157, 0.5);
+}
+
+.up-next-info {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.next-song-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.next-artist {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.next-separator {
+    color: var(--accent-pink-light);
+    font-size: 0.7rem;
+}
+
+.next-requester {
+    font-size: 0.65rem;
+    color: var(--accent-pink-light);
+    white-space: nowrap;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+/* === State: No Active Request === */
+.state-no-requests .requester {
+    display: none;
+}
+
+.state-no-requests #overlay-container {
+    background: rgba(30, 20, 40, 0.65);
+}
+
+/* === State: Active Request === */
+.state-active-request .requester {
+    display: flex;
+}
+
+.state-active-request .votes {
+    display: flex;
+}
+
+/* === State: Disconnected === */
+.state-disconnected .song-title {
+    color: var(--text-muted);
+}
+
+.state-disconnected #album-art {
+    filter: grayscale(50%);
+    opacity: 0.7;
+}
+
+/* === Animations === */
+
+/* Slide in from right */
+@keyframes slideInFromRight {
+    from {
+        opacity: 0;
+        transform: translateX(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Slide out to left */
+@keyframes slideOutToLeft {
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(-30px);
+    }
+}
+
+.now-playing.entering {
+    animation: slideInFromRight var(--transition-slow) ease-out forwards;
+}
+
+.now-playing.exiting {
+    animation: slideOutToLeft var(--transition-medium) ease-in forwards;
+}
+
+/* Album art pulse on vote */
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+#album-art.pulse {
+    animation: pulse 0.3s ease;
+}
+
+/* Heart beat animation */
+@keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    25% { transform: scale(1.15); }
+    50% { transform: scale(1); }
+    75% { transform: scale(1.1); }
+}
+
+.play-button.beating {
+    animation: heartbeat 0.6s ease;
+}
+
+/* Vote count pop */
+@keyframes votePop {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+}
+
+.vote-count.pop {
+    animation: votePop 0.3s ease;
+}
+
+/* Glow pulse */
+@keyframes glowPulse {
+    0%, 100% { box-shadow: var(--shadow-soft), 0 0 40px rgba(255, 107, 157, 0.3); }
+    50% { box-shadow: var(--shadow-soft), 0 0 60px rgba(255, 107, 157, 0.5); }
+}
+
+#overlay-container.glow {
+    animation: glowPulse 2s ease infinite;
+}
+
+/* Fade in */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.fade-in {
+    animation: fadeIn var(--transition-medium) ease forwards;
+}
+
+/* === Responsive === */
+@media (max-width: 900px) {
+    :root {
+        --album-size: 100px;
+    }
+
+    .song-title {
+        font-size: 1.3rem;
+    }
+
+    .progress-container {
+        max-width: 100%;
+    }
+}

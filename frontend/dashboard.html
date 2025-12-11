@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Song Request Dashboard</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="header">
+            <h1>Song Request Dashboard</h1>
+            <div id="connection-status" class="status">
+                <span class="status-dot"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Now Playing Panel -->
+            <section class="panel now-playing-panel">
+                <h2>Now Playing</h2>
+                <div id="now-playing-card" class="now-playing-card">
+                    <div class="placeholder-art">♪</div>
+                    <div class="now-playing-info">
+                        <div id="dash-song-title" class="song-title">No song playing</div>
+                        <div id="dash-artist" class="artist">-</div>
+                        <div id="dash-requester" class="requester">-</div>
+                        <div class="vote-display">
+                            <span>👍 <span id="dash-likes">0</span></span>
+                            <span>👎 <span id="dash-skips">0</span></span>
+                        </div>
+                    </div>
+                    <button id="skip-btn" class="btn btn-danger">⏭ Skip</button>
+                </div>
+            </section>
+
+            <!-- Queue Panel -->
+            <section class="panel queue-panel">
+                <h2>Request Queue <span id="queue-count" class="badge">0</span></h2>
+                <div id="queue-list" class="queue-list">
+                    <div class="queue-empty-message">No songs in queue</div>
+                </div>
+                <div style="margin-top: 16px;">
+                    <button id="clear-queue-btn" class="btn btn-secondary btn-sm">🗑️ Clear Queue</button>
+                </div>
+            </section>
+
+            <!-- Settings Panel -->
+            <section class="panel settings-panel">
+                <h2>Settings</h2>
+                <form id="settings-form" class="settings-form">
+                    <div class="form-group">
+                        <label for="skip-threshold">Skip Vote Threshold</label>
+                        <input type="number" id="skip-threshold" min="1" max="100" value="5">
+                        <span class="help-text">Votes needed to auto-skip a song</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="request-cooldown">Request Cooldown (seconds)</label>
+                        <input type="number" id="request-cooldown" min="0" max="3600" value="300">
+                        <span class="help-text">Time between requests per user</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="max-queue-size">Max Queue Size</label>
+                        <input type="number" id="max-queue-size" min="1" max="100" value="10">
+                        <span class="help-text">Maximum songs allowed in queue</span>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+                </form>
+            </section>
+
+            <!-- Blocklist Panel -->
+            <section class="panel blocklist-panel">
+                <h2>Blocklist</h2>
+                <div class="blocklist-controls">
+                    <input type="text" id="blocklist-input" placeholder="Artist name or Spotify track ID...">
+                    <button id="add-blocklist-btn" class="btn btn-secondary">+ Add</button>
+                </div>
+                <ul id="blocklist" class="blocklist">
+                    <!-- Blocklist items populated by JS -->
+                </ul>
+                <span class="help-text">Block specific artists or songs from being requested</span>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Song Request System | <a href="/overlay" target="_blank">Open Overlay</a></p>
+        </footer>
+    </div>
+
+    <script src="js/websocket.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>

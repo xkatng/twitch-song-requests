@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=580, height=200">
+    <title>Overlay Preview</title>
+    <link rel="stylesheet" href="css/overlay.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }
+        /* SMALL VERSION - 450x160 for corner placement */
+        #overlay-container.small {
+            width: 450px;
+            height: 160px;
+            padding: 6px 12px 5px 12px;
+            border-radius: 16px;
+        }
+        .small .album-art-container img {
+            width: 80px;
+            height: 80px;
+            border-radius: 14px;
+        }
+        .small .play-button {
+            width: 28px;
+            height: 28px;
+            bottom: -6px;
+            right: -6px;
+        }
+        .small .play-button::before {
+            font-size: 14px;
+        }
+        .small .now-playing {
+            gap: 12px;
+        }
+        .small .song-title {
+            font-size: 1.25rem;
+            line-height: 1.1;
+        }
+        .small .artist-name {
+            font-size: 0.9rem;
+        }
+        .small .song-info {
+            gap: 2px;
+        }
+        .small .progress-container {
+            margin-top: 1px;
+            max-width: 300px;
+        }
+        .small .time-current,
+        .small .time-remaining {
+            font-size: 0.7rem;
+            min-width: 32px;
+        }
+        .small .progress-bar {
+            height: 4px;
+        }
+        .small .votes-section {
+            margin-top: 1px;
+            gap: 0px;
+        }
+        .small .votes {
+            gap: 16px;
+        }
+        .small .vote-icon {
+            font-size: 1.1rem;
+        }
+        .small .vote-count {
+            font-size: 1rem;
+        }
+        .small .requester {
+            font-size: 0.8rem;
+        }
+        .small .up-next {
+            padding: 4px 10px;
+            margin-top: 3px;
+            border-radius: 8px;
+        }
+        .small .up-next-label {
+            font-size: 0.55rem;
+        }
+        .small .next-song-title {
+            font-size: 0.75rem;
+        }
+        .small .next-artist {
+            font-size: 0.7rem;
+        }
+        .small .next-requester {
+            font-size: 0.65rem;
+        }
+
+        /* CURRENT/LARGE VERSION - 580x200 */
+        #overlay-container.large {
+            width: 580px;
+            height: 200px;
+            padding: 8px 16px 6px 16px;
+        }
+        .large .song-title {
+            font-size: 1.7rem;
+            line-height: 1.1;
+        }
+        .large .artist-name {
+            font-size: 1.1rem;
+        }
+        .large .song-info {
+            gap: 3px;
+        }
+        .large .progress-container {
+            margin-top: 2px;
+        }
+        .large .votes-section {
+            margin-top: 2px;
+            gap: 1px;
+        }
+        .large .vote-icon {
+            font-size: 1.5rem;
+        }
+        .large .vote-count {
+            font-size: 1.3rem;
+        }
+        .large .requester {
+            font-size: 0.75rem;
+        }
+        .large .up-next {
+            padding: 5px 12px;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h3 style="color: #ff6b9d; margin-bottom: 20px; font-family: sans-serif;">SMALL VERSION (450x160) - With Request</h3>
+
+    <div id="overlay-container" class="state-active-request small">
+        <!-- Main Now Playing Section -->
+        <div id="now-playing" class="now-playing">
+            <!-- Album Art with Heart Button -->
+            <div class="album-art-container">
+                <img id="album-art"
+                     src="https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36"
+                     alt="Album Art">
+                <div class="play-button"></div>
+            </div>
+
+            <!-- Song Information -->
+            <div class="song-info">
+                <div class="song-title">Blinding Lights</div>
+                <div class="artist-name">The Weeknd</div>
+
+                <!-- Progress Bar -->
+                <div class="progress-container">
+                    <span class="time-current">1:45</span>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 52%;"></div>
+                    </div>
+                    <span class="time-remaining">1:35</span>
+                </div>
+
+                <!-- Voting Section with Requester below -->
+                <div class="votes-section">
+                    <div class="votes">
+                        <span class="vote-item like">
+                            <span class="vote-icon">&#9829;</span>
+                            <span class="vote-count">12</span>
+                        </span>
+                        <span class="vote-item skip">
+                            <span class="vote-icon">👎</span>
+                            <span class="vote-count">2</span>
+                        </span>
+                    </div>
+                    <!-- Requester (shown only for requests) -->
+                    <div class="requester">
+                        <span class="requester-label">Requested by:</span>
+                        <span class="requester-name">CoolViewer123</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Up Next Preview -->
+        <div class="up-next">
+            <div class="up-next-label">Up Next</div>
+            <div class="up-next-info">
+                <span class="next-song-title">Save Your Tears</span>
+                <span class="next-separator">&#8226;</span>
+                <span class="next-artist">The Weeknd</span>
+            </div>
+            <div class="next-requester">by StreamFan99</div>
+        </div>
+    </div>
+
+    <h3 style="color: #b388ff; margin: 40px 0 20px 0; font-family: sans-serif;">SMALL VERSION (450x160) - Regular Playback</h3>
+
+    <div id="overlay-container" class="state-no-requests small">
+        <!-- Main Now Playing Section -->
+        <div id="now-playing" class="now-playing">
+            <!-- Album Art with Heart Button -->
+            <div class="album-art-container">
+                <img id="album-art"
+                     src="https://i.scdn.co/image/ab67616d0000b273a048415db06a5b6fa7ec4e1a"
+                     alt="Album Art">
+                <div class="play-button"></div>
+            </div>
+
+            <!-- Song Information -->
+            <div class="song-info">
+                <div class="song-title">Starboy</div>
+                <div class="artist-name">The Weeknd, Daft Punk</div>
+
+                <!-- Progress Bar -->
+                <div class="progress-container">
+                    <span class="time-current">2:15</span>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 35%;"></div>
+                    </div>
+                    <span class="time-remaining">4:05</span>
+                </div>
+
+                <!-- Voting Section - no requester shown -->
+                <div class="votes-section">
+                    <div class="votes">
+                        <span class="vote-item like">
+                            <span class="vote-icon">&#9829;</span>
+                            <span class="vote-count">5</span>
+                        </span>
+                        <span class="vote-item skip">
+                            <span class="vote-icon">👎</span>
+                            <span class="vote-count">0</span>
+                        </span>
+                    </div>
+                    <!-- This will be hidden by state-no-requests -->
+                    <div class="requester">
+                        <span class="requester-label">Requested by:</span>
+                        <span class="requester-name">Someone</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Up Next still shows for regular playback -->
+        <div class="up-next">
+            <div class="up-next-label">Up Next</div>
+            <div class="up-next-info">
+                <span class="next-song-title">Die For You</span>
+                <span class="next-separator">&#8226;</span>
+                <span class="next-artist">The Weeknd</span>
+            </div>
+            <div class="next-requester"></div>
+        </div>
+    </div>
+</body>
+</html>

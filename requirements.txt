@@ -1,0 +1,27 @@
+# Twitch Song Request System - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Twitch Integration
+# Latest available TwitchIO version is 3.1.0 — 3.2.0 does not exist yet.
+twitchio==3.1.0
+
+# Spotify Integration
+spotipy==2.24.0
+
+# Configuration Management
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# Async File Operations
+aiofiles>=23.1.0,<24.0.0
+
+# WebSocket Support
+websockets==12.0
+
+# HTTP Client (for API calls)
+httpx==0.26.0
+requests>=2.31.0

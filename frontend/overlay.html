@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=450, height=160">
+    <title>Song Request Overlay</title>
+    <link rel="stylesheet" href="css/overlay.css">
+</head>
+<body>
+    <div id="overlay-container" class="state-no-requests">
+
+        <!-- Main Now Playing Section -->
+        <div id="now-playing" class="now-playing">
+            <!-- Album Art with Heart Button -->
+            <div class="album-art-container">
+                <img id="album-art"
+                     src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect fill='%232a1f3d' width='100' height='100' rx='20'/%3E%3Ctext x='50%25' y='50%25' fill='%23ff6b9d' font-size='36' text-anchor='middle' dy='.35em'%3E%E2%99%AA%3C/text%3E%3C/svg%3E"
+                     alt="Album Art">
+                <div class="play-button"></div>
+            </div>
+
+            <!-- Song Information -->
+            <div class="song-info">
+                <div id="song-title" class="song-title">No Song Playing</div>
+                <div id="artist-name" class="artist-name">-</div>
+
+                <!-- Progress Bar with Both Timestamps -->
+                <div class="progress-container">
+                    <span id="time-current" class="time-current">0:00</span>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                    <span id="time-remaining" class="time-remaining">0:00</span>
+                </div>
+
+                <!-- Voting Section with Requester below -->
+                <div class="votes-section">
+                    <div id="votes" class="votes">
+                        <span class="vote-item like">
+                            <span class="vote-icon">♥</span>
+                            <span id="like-count" class="vote-count">0</span>
+                        </span>
+                        <span class="vote-item skip">
+                            <span class="vote-icon">👎</span>
+                            <span id="skip-count" class="vote-count">0</span>
+                        </span>
+                    </div>
+                    <!-- Requester (shown only for requests) -->
+                    <div id="requester" class="requester">
+                        <span class="requester-label">Requested by:</span>
+                        <span id="requester-name" class="requester-name">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Up Next Preview -->
+        <div id="up-next" class="up-next hidden">
+            <div class="up-next-label">Up Next</div>
+            <div class="up-next-info">
+                <span id="next-song-title" class="next-song-title">-</span>
+                <span class="next-separator">•</span>
+                <span id="next-artist" class="next-artist">-</span>
+            </div>
+            <div id="next-requester" class="next-requester">-</div>
+        </div>
+
+    </div>
+
+    <script src="js/websocket.js"></script>
+    <script src="js/overlay.js"></script>
+</body>
+</html>
