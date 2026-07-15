@@ -7,6 +7,7 @@ TwitchIO 3.x uses EventSub instead of IRC for chat.
 
 import asyncio
 import logging
+import time
 from typing import Optional, Callable, Awaitable, Any
 from twitchio.ext import commands
 from twitchio import eventsub
@@ -16,6 +17,19 @@ import httpx
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _added_message(username: str, result) -> str:
+    """
+    Build the 'song added' chat reply. The request callback returns a dict
+    with queue position and ETA; fall back to a plain message otherwise.
+    """
+    if isinstance(result, dict) and result.get("position"):
+        msg = f"@{username} your song has been added! Position #{result['position']}"
+        if result.get("eta_text"):
+            msg += f" — playing in {result['eta_text']}"
+        return msg
+    return f"@{username} your song has been added to the queue!"
 
 
 class TwitchService(commands.Bot):
@@ -34,6 +48,10 @@ class TwitchService(commands.Bot):
         on_clear_queue: Optional[Callable[[], Awaitable[Any]]] = None,
         on_queue_request: Optional[Callable[[], Awaitable[list]]] = None,
         on_current_song_request: Optional[Callable[[], Awaitable[dict]]] = None,
+        on_poll_end: Optional[Callable[[Any], Awaitable[Any]]] = None,
+        on_poll_progress: Optional[Callable[[Any], Awaitable[Any]]] = None,
+        on_music_rats: Optional[Callable[[], Awaitable[str]]] = None,
+        on_cancel_request: Optional[Callable[[str], Awaitable[Any]]] = None,
         oauth_token: Optional[str] = None,
         refresh_token: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -68,6 +86,10 @@ class TwitchService(commands.Bot):
         self.on_clear_queue_callback = on_clear_queue
         self.on_queue_request_callback = on_queue_request
         self.on_current_song_request_callback = on_current_song_request
+        self.on_poll_end_callback = on_poll_end
+        self.on_poll_progress_callback = on_poll_progress
+        self.on_music_rats_callback = on_music_rats
+        self.on_cancel_request_callback = on_cancel_request
 
         # Track last song
         self._last_song: Optional[dict] = None
@@ -131,6 +153,25 @@ class TwitchService(commands.Bot):
                 logger.info(f"Subscribed to channel.channel_points_custom_reward_redemption.add for broadcaster {self._user_id}")
             except Exception as e:
                 logger.error(f"Failed to subscribe to Channel Points: {e}")
+
+            # Subscribe to poll events (for the skip poll feature)
+            try:
+                poll_end_sub = eventsub.ChannelPollEndSubscription(
+                    broadcaster_user_id=self._user_id,
+                )
+                await self.subscribe_websocket(payload=poll_end_sub)
+                # Progress events power the landslide early-skip
+                poll_progress_sub = eventsub.ChannelPollProgressSubscription(
+                    broadcaster_user_id=self._user_id,
+                )
+                await self.subscribe_websocket(payload=poll_progress_sub)
+                logger.info("Subscribed to channel.poll.end and channel.poll.progress")
+            except Exception as e:
+                logger.error(
+                    f"Failed to subscribe to poll events (skip polls disabled): {e}. "
+                    "If you re-used an old login, delete .twitch_cache and restart "
+                    "to re-authenticate with poll permissions."
+                )
 
             logger.info(f"Listening for song request rewards (case-insensitive): songredeem, song request, etc.")
 
@@ -314,48 +355,116 @@ class TwitchService(commands.Bot):
                 )
                 response.raise_for_status()
                 return True
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                # Twitch only allows the app that CREATED a reward to update
+                # its redemptions. Rewards made manually in the Twitch
+                # dashboard can never be fulfilled/refunded via the API.
+                logger.warning(
+                    "Cannot update redemption status (403): this reward was not "
+                    "created by this app, so Twitch won't allow refunds for it. "
+                    "To enable automatic refunds, delete the reward on Twitch and "
+                    "let the app create its own reward."
+                )
+            else:
+                logger.error(f"Error updating redemption: {e}")
+            return False
         except Exception as e:
             logger.error(f"Error updating redemption: {e}")
             return False
 
-    async def handle_redemption(
-        self,
-        user: str,
-        user_input: str,
-        redemption_id: str,
-        reward_id: str
-    ) -> None:
+    # -------------------------------------------------------------------------
+    # Polls (skip poll feature)
+    # -------------------------------------------------------------------------
+
+    async def create_poll(self, title: str, choices: list, duration_seconds: int) -> Optional[str]:
         """
-        Handle a Channel Point redemption.
+        Create a Twitch poll on the channel.
 
         Args:
-            user: Username who redeemed
-            user_input: The text they entered
-            redemption_id: Unique redemption ID
-            reward_id: The reward's ID
+            title: Poll question (max 60 chars, truncated if longer)
+            choices: List of 2-5 choice titles (max 25 chars each)
+            duration_seconds: Poll duration (15-1800)
+
+        Returns:
+            Poll ID if created, None otherwise
         """
-        logger.info(f"Redemption from {user}: {user_input}")
+        if not self._access_token or not self._user_id:
+            return None
 
-        if self.on_song_request_callback:
-            try:
-                # Process the song request
-                success = await self.on_song_request_callback(user, user_input)
+        url = "https://api.twitch.tv/helix/polls"
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "Client-Id": self.settings.twitch_client_id,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "broadcaster_id": self._user_id,
+            "title": title[:60],
+            "choices": [{"title": c[:25]} for c in choices],
+            "duration": max(15, min(1800, duration_seconds)),
+        }
 
-                # Update redemption status
-                await self.update_redemption_status(
-                    redemption_id,
-                    reward_id,
-                    fulfilled=success
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                if data.get("data"):
+                    poll_id = data["data"][0]["id"]
+                    logger.info(f"Created poll '{payload['title']}' ({poll_id})")
+                    return poll_id
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                logger.warning(
+                    "Cannot create poll (403): polls require Twitch Affiliate/Partner "
+                    "and the channel:manage:polls permission. If you recently updated, "
+                    "delete .twitch_cache and restart to re-authenticate."
                 )
+            elif e.response.status_code == 400 and "poll" in e.response.text.lower():
+                logger.warning(f"Cannot create poll: another poll may already be active. ({e.response.text[:200]})")
+            else:
+                logger.error(f"Error creating poll: {e} - {e.response.text[:200]}")
+        except Exception as e:
+            logger.error(f"Error creating poll: {e}")
 
-            except Exception as e:
-                logger.error(f"Error processing redemption: {e}")
-                # Refund on error
-                await self.update_redemption_status(
-                    redemption_id,
-                    reward_id,
-                    fulfilled=False
-                )
+        return None
+
+    async def end_poll(self, poll_id: str, archive: bool = False) -> bool:
+        """
+        End an active poll early.
+
+        Args:
+            poll_id: The poll to end
+            archive: If True, hide the results (ARCHIVED); otherwise show them (TERMINATED)
+
+        Returns:
+            True if the poll was ended
+        """
+        if not self._access_token or not self._user_id:
+            return False
+
+        url = "https://api.twitch.tv/helix/polls"
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "Client-Id": self.settings.twitch_client_id,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "broadcaster_id": self._user_id,
+            "id": poll_id,
+            "status": "ARCHIVED" if archive else "TERMINATED",
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.patch(url, headers=headers, json=payload)
+                response.raise_for_status()
+                logger.info(f"Ended poll {poll_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error ending poll: {e}")
+            return False
 
     # -------------------------------------------------------------------------
     # Chat Messaging
@@ -428,8 +537,12 @@ class ChatComponent(commands.Component):
         "sr",
     ]
 
+    # Seconds between !musicrats uses (anyone can call it - keep chat clean)
+    MUSIC_RATS_COOLDOWN = 60
+
     def __init__(self, bot: TwitchService) -> None:
         self.bot = bot
+        self._last_music_rats = 0.0
         logger.info(f"ChatComponent initialized - listening for rewards: {self.SONG_REQUEST_REWARD_NAMES}")
 
     @commands.Component.listener("raw_event")
@@ -450,8 +563,13 @@ class ChatComponent(commands.Component):
             await self._handle_command(payload, text)
 
     @commands.Component.listener()
-    async def event_channel_points_redeem(self, payload: twitchio.ChannelPointsRedeemAdd) -> None:
-        """Handle Channel Point redemptions."""
+    async def event_custom_redemption_add(self, payload: twitchio.ChannelPointsRedemptionAdd) -> None:
+        """
+        Handle Channel Point redemptions.
+
+        TwitchIO 3.1 dispatches channel.channel_points_custom_reward_redemption.add
+        as "custom_redemption_add", so the listener must use this exact name.
+        """
         reward_title = payload.reward.title if payload.reward else "Unknown"
         user_name = payload.user.name if payload.user else "Unknown"
         user_input = payload.user_input or ""
@@ -478,18 +596,81 @@ class ChatComponent(commands.Component):
         if is_song_request:
             logger.info(f"Song request from {user_name}: {user_input}")
 
-            if self.bot.on_song_request_callback and user_input:
-                try:
-                    success = await self.bot.on_song_request_callback(user_name, user_input)
-                    if success:
-                        await self.bot.send_message(f"@{user_name} your song has been added to the queue!")
-                        logger.info(f"Song request successful for {user_name}")
-                    else:
-                        await self.bot.send_message(f"@{user_name} couldn't find that song. Try a Spotify link or different search.")
-                        logger.warning(f"Song request failed for {user_name}: song not found")
-                except Exception as e:
+            redemption_id = getattr(payload, "id", None)
+            reward_id = payload.reward.id if payload.reward else None
+
+            async def resolve_redemption(fulfilled: bool) -> bool:
+                """Fulfill or cancel (refund) the redemption. Returns True on success."""
+                if redemption_id and reward_id:
+                    return await self.bot.update_redemption_status(
+                        redemption_id, reward_id, fulfilled=fulfilled
+                    )
+                return False
+
+            if not user_input:
+                refunded = await resolve_redemption(False)
+                msg = f"@{user_name} please include a song name or Spotify link in the redemption."
+                if refunded:
+                    msg += " Your points have been refunded."
+                await self.bot.send_message(msg)
+                return
+
+            if not self.bot.on_song_request_callback:
+                return
+
+            try:
+                result = await self.bot.on_song_request_callback(user_name, user_input)
+                if result:
+                    await resolve_redemption(True)
+                    await self.bot.send_message(_added_message(user_name, result))
+                    logger.info(f"Song request successful for {user_name}")
+                else:
+                    refunded = await resolve_redemption(False)
+                    msg = f"@{user_name} couldn't find that song. Try a Spotify link or different search."
+                    if refunded:
+                        msg += " Your points have been refunded."
+                    await self.bot.send_message(msg)
+                    logger.warning(f"Song request failed for {user_name}: song not found")
+            except Exception as e:
+                refunded = await resolve_redemption(False)
+                # QueueError subclasses carry a viewer-friendly reason
+                # (cooldown, queue full, duplicate, blocked, wrong link type)
+                user_message = getattr(e, "user_message", None)
+                if user_message:
+                    msg = f"@{user_name} {user_message}"
+                    logger.warning(f"Song request rejected for {user_name}: {e}")
+                else:
+                    msg = f"@{user_name} there was an error processing your request."
                     logger.error(f"Error processing song request: {e}")
-                    await self.bot.send_message(f"@{user_name} there was an error processing your request.")
+                if refunded:
+                    msg += " Your points have been refunded."
+                await self.bot.send_message(msg)
+
+    @commands.Component.listener()
+    async def event_poll_end(self, payload: twitchio.ChannelPollEnd) -> None:
+        """
+        Handle poll end events (skip poll results).
+
+        TwitchIO 3.1 dispatches channel.poll.end as "poll_end".
+        """
+        logger.info(f"Poll ended: '{payload.title}' status={payload.status}")
+        if self.bot.on_poll_end_callback:
+            try:
+                await self.bot.on_poll_end_callback(payload)
+            except Exception as e:
+                logger.error(f"Error handling poll end: {e}")
+
+    @commands.Component.listener()
+    async def event_poll_progress(self, payload: twitchio.ChannelPollProgress) -> None:
+        """
+        Handle live poll vote updates (dispatched as "poll_progress").
+        Used to end the skip poll early on a landslide.
+        """
+        if self.bot.on_poll_progress_callback:
+            try:
+                await self.bot.on_poll_progress_callback(payload)
+            except Exception as e:
+                logger.error(f"Error handling poll progress: {e}")
 
     async def _handle_command(self, payload: twitchio.ChatMessage, text: str) -> None:
         """Manually handle commands from chat messages."""
@@ -506,7 +687,7 @@ class ChatComponent(commands.Component):
             await self._cmd_pass(payload, chatter_name)
         elif cmd in ("queue", "q"):
             await self._cmd_queue(payload)
-        elif cmd in ("forceskip", "fs"):
+        elif cmd in ("forceskip", "fs", "skip"):
             await self._cmd_forceskip(payload, chatter_name)
         elif cmd in ("clearqueue", "cq"):
             await self._cmd_clearqueue(payload, chatter_name)
@@ -516,36 +697,41 @@ class ChatComponent(commands.Component):
             await self._cmd_lastsong(payload)
         elif cmd in ("request", "sr"):
             await self._cmd_request(payload, chatter_name, args)
+        elif cmd in ("musicrats", "musicrat", "ratmusic"):
+            await self._cmd_music_rats(payload)
+        elif cmd == "cancel":
+            await self._cmd_cancel(payload, chatter_name)
 
     async def _cmd_like(self, payload: twitchio.ChatMessage, username: str) -> None:
-        """Vote to like the current song."""
+        """
+        Vote to like the current song.
+
+        Votes are counted silently (overlay + end-of-song summary show totals)
+        to keep chat clean and avoid singling out voters.
+        """
         if self.bot.on_like_callback:
             try:
                 result = await self.bot.on_like_callback(username)
                 if result:
-                    # Get current song info
-                    song_info = await self._get_current_song_info()
-                    if song_info:
-                        await self.bot.send_message(f"@{username} liked \"{song_info}\" 👍")
-                    else:
-                        await self.bot.send_message(f"@{username} liked the song! 👍")
                     logger.info(f"Like registered for {username}")
             except Exception as e:
                 logger.error(f"Like command error: {e}")
 
     async def _cmd_pass(self, payload: twitchio.ChatMessage, username: str) -> None:
-        """Vote to pass/skip the current song."""
+        """
+        Vote to pass/skip the current song.
+
+        Votes are counted silently; enough votes trigger an anonymous
+        Twitch poll instead of naming voters in chat.
+        """
         if self.bot.on_skip_vote_callback:
             try:
-                added, should_skip = await self.bot.on_skip_vote_callback(username)
+                # Mod votes carry extra weight in the internal tally -
+                # detected by badge, never announced in chat
+                is_mod = self._is_privileged(payload)
+                added, should_skip = await self.bot.on_skip_vote_callback(username, is_mod)
                 if added:
-                    # Get current song info
-                    song_info = await self._get_current_song_info()
-                    if song_info:
-                        await self.bot.send_message(f"@{username} voted to pass \"{song_info}\"")
-                    else:
-                        await self.bot.send_message(f"@{username} voted to pass!")
-                    logger.info(f"Pass vote registered for {username}")
+                    logger.info(f"Pass vote registered for {username}" + (" (mod)" if is_mod else ""))
             except Exception as e:
                 logger.error(f"Pass command error: {e}")
 
@@ -622,7 +808,16 @@ class ChatComponent(commands.Component):
             await self.bot.send_message("No previous song recorded yet.")
 
     async def _cmd_request(self, payload: twitchio.ChatMessage, username: str, song_input: str) -> None:
-        """Request a song via chat command (for testing without going live)."""
+        """
+        Request a song via chat command (broadcaster/mods only, for testing).
+        Viewers must use the Channel Points reward so requests always cost points.
+        """
+        if not self._is_privileged(payload):
+            await self.bot.send_message(
+                f"@{username} Please use channel points to redeem a song. Thank you!"
+            )
+            return
+
         if not song_input.strip():
             await self.bot.send_message(f"@{username} please provide a song name or Spotify link. Usage: !request [song name]")
             return
@@ -630,9 +825,9 @@ class ChatComponent(commands.Component):
         if self.bot.on_song_request_callback:
             try:
                 logger.info(f"Chat song request from {username}: {song_input}")
-                success = await self.bot.on_song_request_callback(username, song_input)
-                if success:
-                    await self.bot.send_message(f"@{username} your song has been added to the queue!")
+                result = await self.bot.on_song_request_callback(username, song_input)
+                if result:
+                    await self.bot.send_message(_added_message(username, result))
                 else:
                     await self.bot.send_message(f"@{username} couldn't find that song. Try a Spotify link or different search.")
             except Exception as e:
@@ -643,14 +838,51 @@ class ChatComponent(commands.Component):
                     logger.error(f"Error processing song request: {e}")
                     await self.bot.send_message(f"@{username} there was an error processing your request.")
 
+    async def _cmd_cancel(self, payload: twitchio.ChatMessage, username: str) -> None:
+        """Cancel the user's own request (queued or currently playing)."""
+        if not self.bot.on_cancel_request_callback:
+            return
+
+        try:
+            result = await self.bot.on_cancel_request_callback(username)
+            if result:
+                if result.get("was_playing"):
+                    msg = f'@{username} canceled — skipping "{result["canceled"]}". You can request again right away.'
+                else:
+                    msg = f'@{username} your request "{result["canceled"]}" was canceled. You can request again right away.'
+                await self.bot.send_message(msg)
+            else:
+                await self.bot.send_message(f"@{username} you don't have a request to cancel.")
+        except Exception as e:
+            logger.error(f"Cancel command error: {e}")
+
+    async def _cmd_music_rats(self, payload: twitchio.ChatMessage) -> None:
+        """Show the top 5 most-praised song requesters (rate-limited)."""
+        if not self.bot.on_music_rats_callback:
+            return
+
+        now = time.monotonic()
+        if now - self._last_music_rats < self.MUSIC_RATS_COOLDOWN:
+            return  # silently ignore while on cooldown
+        self._last_music_rats = now
+
+        try:
+            message = await self.bot.on_music_rats_callback()
+            if message:
+                await self.bot.send_message(message)
+        except Exception as e:
+            logger.error(f"Music rats command error: {e}")
+
     def _is_privileged(self, payload: twitchio.ChatMessage) -> bool:
         """Check if user is broadcaster or mod."""
         try:
-            # Check badges in the payload
-            badges = payload.badges if hasattr(payload, 'badges') else {}
-            is_broadcaster = any(b.id == "broadcaster" for b in badges) if badges else False
-            is_mod = any(b.id == "moderator" for b in badges) if badges else False
-            return is_broadcaster or is_mod
+            # The broadcaster is always privileged (works even without badges)
+            if payload.chatter and payload.broadcaster and payload.chatter.id == payload.broadcaster.id:
+                return True
+
+            # Badge TYPE lives in set_id ("broadcaster"/"moderator");
+            # badge.id is only the version number ("1")
+            badges = getattr(payload, "badges", None) or []
+            return any(b.set_id in ("broadcaster", "moderator") for b in badges)
         except Exception:
-            # Fallback - allow if we can't check
             return False

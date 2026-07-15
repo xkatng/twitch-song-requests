@@ -22,6 +22,15 @@ class SettingsUpdate(BaseModel):
     max_queue_size: Optional[int] = None
     cooldown_seconds: Optional[int] = None
     skip_threshold: Optional[int] = None
+    poll_enabled: Optional[bool] = None
+    poll_duration_seconds: Optional[int] = None
+    poll_trigger_votes: Optional[int] = None
+    poll_auto_start_seconds: Optional[int] = None
+    poll_min_skip_votes: Optional[int] = None
+    poll_landslide_percent: Optional[int] = None
+    poll_instant_skip_votes: Optional[int] = None
+    mod_pass_weight: Optional[int] = None
+    max_song_duration_seconds: Optional[int] = None
 
 
 class BlocklistItem(BaseModel):
@@ -172,6 +181,15 @@ def create_router(
                 max_queue_size=update.max_queue_size,
                 cooldown_seconds=update.cooldown_seconds,
                 skip_threshold=update.skip_threshold,
+                poll_enabled=update.poll_enabled,
+                poll_duration_seconds=update.poll_duration_seconds,
+                poll_trigger_votes=update.poll_trigger_votes,
+                poll_auto_start_seconds=update.poll_auto_start_seconds,
+                poll_min_skip_votes=update.poll_min_skip_votes,
+                poll_landslide_percent=update.poll_landslide_percent,
+                poll_instant_skip_votes=update.poll_instant_skip_votes,
+                mod_pass_weight=update.mod_pass_weight,
+                max_song_duration_seconds=update.max_song_duration_seconds,
             )
             return new_settings
         except Exception as e:
@@ -296,7 +314,7 @@ def create_router(
         if add_test_request:
             try:
                 result = await add_test_request("TestUser", song_query)
-                return {"success": result, "query": song_query}
+                return {"success": bool(result), "query": song_query, "details": result if isinstance(result, dict) else None}
             except Exception as e:
                 logger.error(f"Test request error: {e}")
                 raise HTTPException(status_code=500, detail=str(e))

@@ -8,11 +8,17 @@ A complete song request system for Twitch streams with Spotify integration, Chan
 
 ## Features
 
-- **Channel Points Integration** - Viewers redeem "SongRedeem" to request songs
+- **Channel Points Integration** - Viewers redeem "SongRedeem" to request songs (with automatic refund attempts on failed requests)
 - **Spotify Integration** - Search by song name or paste Spotify track links
-- **Real-time OBS Overlay** - Compact 450x160px overlay with album art, progress bar, and vote counts
-- **Vote System** - `!like` and `!pass` chat commands for viewer interaction
-- **Web Dashboard** - Manage queue, settings, and blocklist from your browser
+- **Anonymous Skip Polls** - A native Twitch poll opens 30s into every requested song; the audience decides Keep/Skip without anyone's vote being visible
+- **Smart Skip Thresholds** - Skipping needs a majority AND a minimum vote count; an instant-skip count and landslide percentage end one-sided polls early
+- **Queue Position + ETA** - Requesters are told their position and an estimate of when their song will play
+- **`!cancel`** - Requesters can cancel their own song (wrong song? changed your mind?) with cooldown reset
+- **Music Rats Leaderboard** - `!musicrats` shows the all-time most praised requesters, tracked across streams
+- **Song Length Limit** - Requests over a configurable duration (default 5 min) are rejected with a friendly message
+- **Silent Voting** - `!like`/`!pass` are counted without chat replies; one summary posts when the song ends
+- **Real-time OBS Overlay** - Compact overlay with album art, progress bar, and vote counts
+- **Web Dashboard** - Manage queue, poll settings (with sliders), and blocklist live from your browser
 - **Auto-Resume** - Returns to your playlist when the request queue empties
 - **Session Logging** - CSV logs of all song requests
 - **Duplicate Prevention** - Same song can't be requested twice per stream
@@ -141,30 +147,66 @@ TWITCH_CHANNEL=your_channel_name
 
 | Command | Description |
 |---------|-------------|
-| `!like` | Like the current song |
-| `!pass` | Vote to skip the current song |
+| `!like` | Like the current song (silent; credits the requester's Music Rats score) |
+| `!pass` | Vote to skip (silent; enough votes bring up the skip poll early) |
 | `!queue` or `!q` | View the song request queue |
 | `!song` or `!np` | Show the current song |
 | `!lastsong` | Show the previously played song |
-| `!sr <song>` | Request a song (fallback if Channel Points don't work) |
+| `!cancel` | Cancel your own request; resets your cooldown so you can request again |
+| `!musicrats` | Top 5 most praised requesters + most liked song (also `!musicrat`, `!ratmusic`; 60s cooldown) |
+
+Viewers request songs by redeeming the Channel Points reward - typing `!request`/`!sr` in chat gets a polite redirect to Channel Points.
 
 ### For Moderators & Broadcaster
 
 | Command | Description |
 |---------|-------------|
-| `!forceskip` or `!fs` | Force skip the current song |
+| `!skip`, `!forceskip`, or `!fs` | Force skip the current song |
 | `!clearqueue` or `!cq` | Clear the entire queue |
+| `!request <song>` or `!sr <song>` | Add a song directly without Channel Points (testing / on-the-fly) |
+
+## Skip Polls
+
+30 seconds into every requested song (configurable), the bot creates a native
+Twitch poll: **"Skip: Song?"** with *Keep it / Skip it* choices. Poll votes are
+completely anonymous - nobody, including the broadcaster, can see who voted.
+
+The song is skipped only when **both** hold at the poll's end:
+
+- Skip has the **majority**, and
+- Skip has at least `POLL_MIN_SKIP_VOTES` votes (quiet polls = song plays on)
+
+Two rules end a decided poll early so bad songs die fast:
+
+- **Instant skip:** Skip reaches `POLL_INSTANT_SKIP_VOTES` (pure count - useful
+  because viewers who like a song rarely bother voting Keep)
+- **Landslide:** Skip has the minimum votes and `POLL_LANDSLIDE_PERCENT` of all
+  votes cast
+
+Polls only ever run for requested songs. The streamer's own playlist never gets
+polled; `!pass` votes on playlist songs fall back to the hard `SKIP_THRESHOLD`.
+Requires Twitch Affiliate/Partner (`channel:manage:polls` scope - delete
+`.twitch_cache` and re-authenticate after upgrading from an older version).
 
 ## Settings
 
-Configure via the dashboard or `.env` file:
+Configure via the dashboard (live sliders, no restart) or `.env` file (startup defaults):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `MAX_QUEUE_SIZE` | 10 | Maximum songs in queue |
 | `COOLDOWN_SECONDS` | 300 | Cooldown between requests per user (5 min) |
-| `SKIP_THRESHOLD` | 5 | Skip votes needed to auto-skip |
+| `MAX_SONG_DURATION_SECONDS` | 300 | Longest allowed request (0 = no limit) |
+| `SKIP_THRESHOLD` | 5 | Skip votes for the non-poll fallback skip |
 | `CHANNEL_POINTS_COST` | 500 | Cost of song request reward |
+| `POLL_ENABLED` | true | Use anonymous Twitch polls to decide skips |
+| `POLL_AUTO_START_SECONDS` | 30 | Seconds into a requested song before the poll opens (0 = only `!pass` triggers it) |
+| `POLL_DURATION_SECONDS` | 60 | How long the poll runs |
+| `POLL_TRIGGER_VOTES` | 2 | `!pass` votes that open the poll early |
+| `POLL_MIN_SKIP_VOTES` | 4 | Minimum Skip votes required to actually skip |
+| `POLL_INSTANT_SKIP_VOTES` | 6 | Skip count that ends the poll and skips immediately (0 = off) |
+| `POLL_LANDSLIDE_PERCENT` | 70 | Skip % that ends the poll early once the minimum is met (0 = off) |
+| `MOD_PASS_WEIGHT` | 1 | How many votes a moderator's `!pass` counts for |
 
 ## Building Standalone Executable
 
@@ -187,7 +229,16 @@ This is the most common issue. Try these steps:
 3. **Re-authenticate with Twitch** when the browser opens
 4. Make sure your Channel Points reward is named "SongRedeem", "Song Request", or "Song"
 
-The `!sr` command is available as a fallback for requesting songs.
+The `!request`/`!sr` command is available to the broadcaster and mods as a fallback.
+
+### Skip polls not appearing
+
+1. Polls require Twitch **Affiliate or Partner**
+2. If upgrading from an older version, delete `.twitch_cache` and re-authenticate
+   so the token gains the `channel:manage:polls` scope (the console logs a clear
+   error if the scope is missing)
+3. Check `POLL_ENABLED=true` and that the playing song is a *request* - playlist
+   songs are never polled
 
 ### Spotify not playing
 
@@ -223,9 +274,10 @@ twitch-song-requests/
 │   └── events.py           # WebSocket event models
 ├── services/
 │   ├── spotify_service.py  # Spotify API integration
-│   ├── twitch_service.py   # Twitch chat and Channel Points
+│   ├── twitch_service.py   # Twitch chat, Channel Points, and polls
 │   ├── twitch_auth.py      # Twitch OAuth handling
 │   ├── queue_service.py    # Request queue management
+│   ├── likes_tracker.py    # Persistent !musicrats leaderboard
 │   └── session_logger.py   # CSV logging
 ├── api/
 │   ├── routes.py           # REST API endpoints

@@ -35,6 +35,7 @@ logger = logging.getLogger("song-requests")
 from config.settings import get_settings, RuntimeSettings
 from services.spotify_service import SpotifyService
 from services.queue_service import QueueService, QueueError, InvalidLinkError
+from services.likes_tracker import LikesTracker
 from services.session_logger import SessionLogger
 from services.twitch_service import TwitchService
 from services.twitch_auth import TwitchAuth
@@ -61,6 +62,14 @@ class AppState:
         self.twitch_auth: TwitchAuth = None
         self.playback_task: asyncio.Task = None
         self.twitch_authenticated = asyncio.Event()
+
+        # All-time like leaderboard for !musicrats
+        self.likes_tracker = LikesTracker()
+
+        # Skip poll state: {"poll_id", "track_id", "label"} while a poll runs
+        self.active_poll: dict = None
+        # Tracks that already had their skip poll this session (one poll per song)
+        self.polled_track_ids: set = set()
 
 
 app_state = AppState()
@@ -172,6 +181,10 @@ async def start_twitch_bot_with_token() -> None:
             on_clear_queue=handle_clear_queue,
             on_queue_request=handle_queue_request,
             on_current_song_request=api_get_current_song,
+            on_poll_end=handle_poll_end,
+            on_poll_progress=handle_poll_progress,
+            on_music_rats=handle_music_rats,
+            on_cancel_request=handle_cancel_request,
             oauth_token=token,
             refresh_token=refresh_token,
             user_id=user_id,
@@ -197,7 +210,30 @@ async def start_twitch_bot() -> None:
 # Event Handlers
 # =============================================================================
 
-async def handle_song_request(username: str, user_input: str) -> bool:
+def estimate_wait_seconds(position: int) -> int:
+    """
+    Estimate seconds until the request at a 1-based queue position starts:
+    time left on the current song plus the durations of queued songs ahead.
+    """
+    total_ms = 0
+    try:
+        progress, duration, _ = app_state.spotify.get_playback_progress()
+        if duration:
+            total_ms += max(0, duration - progress)
+    except Exception:
+        pass
+    total_ms += app_state.queue.get_pending_duration_ms(position)
+    return total_ms // 1000
+
+
+def format_eta(seconds: int) -> str:
+    """Format an ETA as a friendly string, e.g. '~5 min'."""
+    if seconds < 90:
+        return "~1 min"
+    return f"~{round(seconds / 60)} min"
+
+
+async def handle_song_request(username: str, user_input: str):
     """
     Handle a song request from Channel Points.
 
@@ -206,7 +242,9 @@ async def handle_song_request(username: str, user_input: str) -> bool:
         user_input: Spotify link or search query
 
     Returns:
-        True if request was added, False otherwise
+        On success: dict with position and an ETA string for chat replies
+        (truthy). False if the song wasn't found. Raises QueueError when
+        the request is rejected (cooldown, queue full, too long, ...).
     """
     try:
         # Check if it's an album/playlist/artist link instead of a track
@@ -226,6 +264,9 @@ async def handle_song_request(username: str, user_input: str) -> bool:
         # Add to internal queue (for tracking requester, votes, etc.)
         request, position = app_state.queue.add_request(song, username)
 
+        # Estimate when it will play (before broadcast, position is 1-based)
+        eta_text = format_eta(estimate_wait_seconds(position))
+
         # Add to Spotify's queue so it shows in the Spotify app
         app_state.spotify.add_to_queue(song)
 
@@ -237,7 +278,7 @@ async def handle_song_request(username: str, user_input: str) -> bool:
 
         logger.info(f"Added '{song.title}' by {song.artist} (requested by {username}) - added to Spotify queue")
 
-        return True
+        return {"success": True, "position": position, "eta_text": eta_text, "title": song.title}
 
     except QueueError as e:
         logger.warning(f"Queue error for {username}: {e.user_message}")
@@ -249,21 +290,91 @@ async def handle_song_request(username: str, user_input: str) -> bool:
 
 
 async def handle_like(username: str) -> bool:
-    """Handle a like vote."""
+    """Handle a like vote. Likes on requested songs credit the requester."""
     if app_state.queue.add_like(username):
+        current = app_state.queue.get_current()
+        if current:
+            app_state.likes_tracker.add_like(
+                current.requester,
+                f"{current.song.title} — {current.song.artist}",
+            )
         await broadcast_vote_update()
         return True
     return False
 
 
-async def handle_skip_vote(username: str) -> tuple:
-    """Handle a skip vote."""
-    added, should_skip = app_state.queue.add_skip_vote(username)
+async def handle_cancel_request(username: str):
+    """
+    Cancel the user's own request (queued or currently playing).
+
+    Returns:
+        Dict with the canceled title and whether it was playing, or None
+        if the user has nothing to cancel.
+    """
+    # Currently playing their request? Skip it now.
+    current = app_state.queue.get_current()
+    if current and current.requester.lower() == username.lower():
+        title = current.song.title
+        app_state.queue.forgive_request(current)
+        await skip_current_song()
+        logger.info(f"{username} canceled their playing request: {title}")
+        return {"canceled": title, "was_playing": True}
+
+    # Otherwise cancel their queued request (auto-skipped when Spotify reaches it)
+    removed = app_state.queue.cancel_user_request(username)
+    if removed:
+        await broadcast_queue_update()
+        return {"canceled": removed.song.title, "was_playing": False}
+
+    return None
+
+
+async def handle_music_rats() -> str:
+    """Build the !musicrats leaderboard message (top 5 most-praised requesters)."""
+    top = app_state.likes_tracker.top(5)
+    if not top:
+        return "No liked requests yet — request a song and earn some 👍!"
+
+    ranks = " ".join(
+        f"{i + 1}) {name} {likes}👍"
+        for i, (name, likes) in enumerate(top)
+    )
+    msg = f"🐀 Music Rats — most praised requesters: {ranks}"
+
+    best = app_state.likes_tracker.best_song()
+    if best:
+        label, owner, likes = best
+        msg += f' | Top banger: "{label}" ({owner}, {likes}👍)'
+
+    return msg[:450]  # stay safely under Twitch's 500-char message limit
+
+
+async def handle_skip_vote(username: str, is_mod: bool = False) -> tuple:
+    """
+    Handle a skip vote.
+
+    A moderator's vote counts as mod_pass_weight votes (default 3) in the
+    internal tally - identified by badge, never announced in chat.
+
+    With polls enabled, enough !pass votes launch an anonymous Twitch poll
+    that decides the skip. The hard vote threshold only applies as a
+    fallback when polls are unavailable (not Affiliate, missing scope, etc.).
+    """
+    weight = app_state.runtime_settings.mod_pass_weight if is_mod else 1
+    added, should_skip = app_state.queue.add_skip_vote(username, weight)
 
     if added:
         await broadcast_vote_update()
+        settings = app_state.runtime_settings
 
-        if should_skip:
+        if settings.poll_enabled:
+            _, skips = app_state.queue.get_vote_counts()
+            if skips >= settings.poll_trigger_votes:
+                started = await start_skip_poll()
+                if not started and should_skip:
+                    logger.info("Skip threshold reached (poll unavailable) - skipping song")
+                    await skip_current_song()
+        elif should_skip:
             logger.info("Skip threshold reached - skipping song")
             await skip_current_song()
 
@@ -288,36 +399,209 @@ async def handle_queue_request() -> list:
 
 
 # =============================================================================
+# Skip Poll
+# =============================================================================
+
+POLL_KEEP_CHOICE = "Keep it"
+POLL_SKIP_CHOICE = "Skip it"
+
+
+async def start_skip_poll() -> bool:
+    """
+    Create an anonymous Twitch poll to decide whether to skip the current song.
+
+    Returns True if a poll is running (newly created or already active) or the
+    song was already polled; False only if a poll could not be created.
+    """
+    if not app_state.twitch:
+        return False
+
+    # Polls only ever run for requested songs. The streamer's own playlist
+    # songs never get polled (!pass falls back to the hard vote threshold).
+    if not app_state.queue.get_current():
+        return False
+
+    if app_state.active_poll:
+        return True  # a skip poll is already running
+
+    track = app_state.spotify.get_current_track()
+    track_id = track.get("id") if track else None
+    if not track_id:
+        return False
+
+    if track_id in app_state.polled_track_ids:
+        return True  # this song already had its poll - result stands
+
+    title = track.get("name", "this song")
+    artist = ", ".join(a["name"] for a in track.get("artists", []))
+    label = f"{title} — {artist}" if artist else title
+
+    poll_id = await app_state.twitch.create_poll(
+        title=f"Skip: {title}?",
+        choices=[POLL_KEEP_CHOICE, POLL_SKIP_CHOICE],
+        duration_seconds=app_state.runtime_settings.poll_duration_seconds,
+    )
+    if not poll_id:
+        return False
+
+    app_state.polled_track_ids.add(track_id)
+    app_state.active_poll = {"poll_id": poll_id, "track_id": track_id, "label": label}
+
+    await app_state.twitch.send_message(
+        f'⚖️ Skip poll started for "{label}" — vote in the poll, it\'s anonymous!'
+    )
+    logger.info(f"Skip poll started for '{label}' (poll {poll_id})")
+    return True
+
+
+async def maybe_auto_start_poll(current_track_id: str, progress_ms: int, is_playing: bool) -> None:
+    """
+    Auto-start the skip poll partway into a requested song.
+
+    Fires once per track: on success the track lands in polled_track_ids;
+    on failure it is marked polled anyway so we don't retry every 2 seconds.
+    Non-requested (playlist) songs are skipped - those can still get a poll
+    via !pass votes.
+    """
+    settings = app_state.runtime_settings
+    if not (settings.poll_enabled and settings.poll_auto_start_seconds):
+        return
+    if not (current_track_id and is_playing):
+        return
+    if app_state.active_poll or current_track_id in app_state.polled_track_ids:
+        return
+    if not app_state.queue.get_current():
+        return  # not a requested song
+    if progress_ms < settings.poll_auto_start_seconds * 1000:
+        return
+
+    started = await start_skip_poll()
+    if not started:
+        app_state.polled_track_ids.add(current_track_id)
+        logger.warning("Auto skip poll could not be created for this song - not retrying")
+
+
+async def handle_poll_end(payload) -> None:
+    """
+    Handle a channel.poll.end EventSub notification.
+
+    Only acts on the bot's own skip poll (ignores polls the streamer runs
+    manually) and only if the polled song is still playing.
+    """
+    poll = app_state.active_poll
+    if not poll or payload.id != poll["poll_id"]:
+        return
+
+    app_state.active_poll = None
+
+    if payload.status == "archived":
+        return  # results hidden - treat as cancelled
+
+    keep_votes = 0
+    skip_votes = 0
+    for choice in payload.choices:
+        if choice.title == POLL_KEEP_CHOICE:
+            keep_votes = choice.votes or 0
+        elif choice.title == POLL_SKIP_CHOICE:
+            skip_votes = choice.votes or 0
+
+    # Only act if the polled song is still playing
+    track = app_state.spotify.get_current_track()
+    current_id = track.get("id") if track else None
+    if current_id != poll["track_id"]:
+        logger.info("Skip poll ended after the song - ignoring result")
+        return
+
+    # Skipping needs a majority AND a minimum number of Skip votes -
+    # a 2-1 poll with three voters shouldn't kill a song. Exception:
+    # reaching the instant-skip count always skips, regardless of ratio
+    # (most viewers who are fine with a song never vote Keep).
+    settings = app_state.runtime_settings
+    min_skips = settings.poll_min_skip_votes
+    instant_hit = settings.poll_instant_skip_votes and skip_votes >= settings.poll_instant_skip_votes
+    if instant_hit or (skip_votes > keep_votes and skip_votes >= min_skips):
+        await app_state.twitch.send_message(
+            f'⏭️ Chat voted to skip "{poll["label"]}" ({skip_votes}–{keep_votes})'
+        )
+        # Clear votes so the end-of-song summary doesn't repeat the result
+        app_state.queue.reset_votes()
+        await broadcast_vote_update()
+        await skip_current_song()
+    else:
+        if skip_votes > keep_votes:
+            msg = (
+                f'🎶 "{poll["label"]}" stays! Skips led {skip_votes}–{keep_votes} '
+                f'but {min_skips} skip votes are needed.'
+            )
+        else:
+            msg = f'🎶 "{poll["label"]}" stays! ({keep_votes}–{skip_votes})'
+        await app_state.twitch.send_message(msg)
+        app_state.queue.reset_votes()
+        await broadcast_vote_update()
+
+
+async def handle_poll_progress(payload) -> None:
+    """
+    Handle live poll vote updates: end the skip poll early once the outcome
+    is decided, so bad songs get skipped quickly. Two independent triggers:
+
+    - Instant skip: Skip reaches poll_instant_skip_votes (pure count - works
+      even though almost nobody bothers voting Keep)
+    - Landslide: Skip has the minimum votes AND poll_landslide_percent of
+      all votes cast
+
+    The poll.end event then applies the result.
+    """
+    poll = app_state.active_poll
+    if not poll or payload.id != poll["poll_id"] or poll.get("ending"):
+        return
+
+    settings = app_state.runtime_settings
+
+    keep_votes = 0
+    skip_votes = 0
+    for choice in payload.choices:
+        if choice.title == POLL_KEEP_CHOICE:
+            keep_votes = choice.votes or 0
+        elif choice.title == POLL_SKIP_CHOICE:
+            skip_votes = choice.votes or 0
+
+    instant = settings.poll_instant_skip_votes
+    instant_hit = instant and skip_votes >= instant
+
+    total = keep_votes + skip_votes
+    landslide_hit = (
+        settings.poll_landslide_percent
+        and total > 0
+        and skip_votes >= settings.poll_min_skip_votes
+        and (skip_votes / total) * 100 >= settings.poll_landslide_percent
+    )
+
+    if not (instant_hit or landslide_hit):
+        return
+
+    poll["ending"] = True
+    reason = "instant-skip count" if instant_hit else "landslide"
+    logger.info(f"{reason} reached ({skip_votes}-{keep_votes}) - ending skip poll early")
+    await app_state.twitch.end_poll(poll["poll_id"])
+
+
+# =============================================================================
 # Playback Control
 # =============================================================================
 
-async def play_next_song() -> bool:
-    """Play the next song from the queue."""
-    request = app_state.queue.get_next()
-
-    if not request:
-        # Queue is empty - resume previous context
-        logger.info("Queue empty - resuming previous playlist")
-        app_state.queue.clear_current()
-        app_state.spotify.resume_previous_context()
-        await broadcast_song_change_from_spotify()
-        return False
-
-    # Play the requested song
-    success = app_state.spotify.play_track(request.song)
-
-    if success:
-        app_state.queue.set_current(request)
-        await broadcast_song_change(request)
-        await broadcast_queue_update()
-
-    return success
-
-
 async def skip_current_song() -> bool:
-    """Skip the current song and play next."""
+    """
+    Skip the current song by advancing Spotify playback.
+
+    Requested songs are already in Spotify's own queue (added at request
+    time), so skipping must go through Spotify's queue too - playing the
+    next request directly would leave a duplicate copy in Spotify's queue.
+    The playback monitor detects the track change and updates the
+    overlay/queue state.
+    """
     app_state.queue.clear_current()
-    return await play_next_song()
+    return app_state.spotify.skip_track()
 
 
 # =============================================================================
@@ -373,6 +657,7 @@ async def playback_monitor_loop():
     logger.info("Starting playback monitor...")
 
     last_track_id = None
+    last_song_label = None  # "Title — Artist" of the previous song, for the summary
 
     while True:
         try:
@@ -391,14 +676,41 @@ async def playback_monitor_loop():
 
             # Detect song change
             if current_track_id and current_track_id != last_track_id:
+                # Canceled request reached the front of Spotify's queue
+                # (Spotify has no remove-from-queue API) - skip it silently
+                if current_track_id in app_state.queue.canceled_song_ids:
+                    app_state.queue.canceled_song_ids.discard(current_track_id)
+                    last_track_id = current_track_id
+                    logger.info("Auto-skipping canceled request")
+                    app_state.spotify.skip_track()
+                    continue
+
+                # Post a vote summary for the song that just ended (counts only,
+                # never names) - skipped when nobody voted to avoid chat noise
+                likes, skips = app_state.queue.get_vote_counts()
+                if last_song_label and (likes or skips) and app_state.twitch:
+                    await app_state.twitch.send_message(
+                        f'📊 "{last_song_label}" — 👍 {likes} · ⏭️ {skips}'
+                    )
+
+                # End any skip poll left over from the previous song. The
+                # poll.end handler ignores it because active_poll is cleared.
+                if app_state.active_poll and app_state.active_poll["track_id"] != current_track_id:
+                    stale_poll = app_state.active_poll
+                    app_state.active_poll = None
+                    if app_state.twitch:
+                        await app_state.twitch.end_poll(stale_poll["poll_id"])
+
                 last_track_id = current_track_id
+                artist_str = ", ".join(a["name"] for a in current_track.get("artists", []))
+                last_song_label = f"{current_track.get('name', 'Unknown')} — {artist_str}"
                 logger.info(f"Track changed: {current_track.get('name', 'Unknown')}")
 
                 # Update the Twitch service with the new song (for !lastsong command)
                 if app_state.twitch and current_track:
                     app_state.twitch.update_current_song({
                         "title": current_track.get("name", "Unknown"),
-                        "artist": ", ".join(a["name"] for a in current_track.get("artists", [])),
+                        "artist": artist_str,
                     })
 
                 # Reset votes for the new song
@@ -412,6 +724,11 @@ async def playback_monitor_loop():
                     app_state.queue.set_current(request)
                     logger.info(f"Playing request from {request.requester}: {request.song.title}")
                     await broadcast_song_change(request)
+                    if app_state.twitch:
+                        await app_state.twitch.send_message(
+                            f"🐀 Now playing: {request.song.title} — {request.song.artist} | "
+                            f"Requested by @{request.requester} | !like or !pass to vote"
+                        )
                 else:
                     # Not a request - broadcast as regular Spotify track
                     app_state.queue.clear_current()
@@ -419,6 +736,9 @@ async def playback_monitor_loop():
 
                 # Broadcast queue update to refresh "Up Next"
                 await broadcast_queue_update()
+
+            # Auto-start the skip poll partway into requested songs
+            await maybe_auto_start_poll(current_track_id, progress, is_playing)
 
             # Skip WebSocket broadcasts if no connections
             if not app_state.ws_manager.has_connections:
@@ -501,12 +821,34 @@ async def api_get_settings() -> dict:
     return app_state.runtime_settings.to_dict()
 
 
-async def api_update_settings(max_queue_size=None, cooldown_seconds=None, skip_threshold=None) -> dict:
+async def api_update_settings(
+    max_queue_size=None,
+    cooldown_seconds=None,
+    skip_threshold=None,
+    poll_enabled=None,
+    poll_duration_seconds=None,
+    poll_trigger_votes=None,
+    poll_auto_start_seconds=None,
+    poll_min_skip_votes=None,
+    poll_landslide_percent=None,
+    poll_instant_skip_votes=None,
+    mod_pass_weight=None,
+    max_song_duration_seconds=None,
+) -> dict:
     """Update settings for API."""
     return app_state.runtime_settings.update(
         max_queue_size=max_queue_size,
         cooldown_seconds=cooldown_seconds,
         skip_threshold=skip_threshold,
+        poll_enabled=poll_enabled,
+        poll_duration_seconds=poll_duration_seconds,
+        poll_trigger_votes=poll_trigger_votes,
+        poll_auto_start_seconds=poll_auto_start_seconds,
+        poll_min_skip_votes=poll_min_skip_votes,
+        poll_landslide_percent=poll_landslide_percent,
+        poll_instant_skip_votes=poll_instant_skip_votes,
+        mod_pass_weight=mod_pass_weight,
+        max_song_duration_seconds=max_song_duration_seconds,
     )
 
 

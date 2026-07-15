@@ -56,6 +56,21 @@ class SongBlockedError(QueueError):
         )
 
 
+class SongTooLongError(QueueError):
+    """Raised when the requested song exceeds the maximum allowed duration."""
+
+    def __init__(self, duration_seconds: int, max_seconds: int):
+        dur_str = f"{duration_seconds // 60}:{duration_seconds % 60:02d}"
+        max_str = f"{max_seconds // 60}:{max_seconds % 60:02d}"
+        super().__init__(
+            f"Song too long ({duration_seconds}s > {max_seconds}s)",
+            f"That song is too long ({dur_str})! Max length is {max_str}.",
+            "SONG_TOO_LONG"
+        )
+        self.duration_seconds = duration_seconds
+        self.max_seconds = max_seconds
+
+
 class UserCooldownError(QueueError):
     """Raised when user is on cooldown."""
 
@@ -103,9 +118,13 @@ class QueueService:
         self.state = QueueState()
         self.cooldowns = CooldownTracker()
 
+        # Canceled requests already sitting in Spotify's queue (which has no
+        # remove API) - the playback monitor auto-skips these when they start
+        self.canceled_song_ids: set = set()
+
         # Standalone vote tracking for non-request songs
         self._standalone_likes: set = set()  # usernames
-        self._standalone_skips: set = set()  # usernames
+        self._standalone_skips: dict = {}  # username -> vote weight (mods count extra)
 
     # -------------------------------------------------------------------------
     # Request Management
@@ -148,6 +167,11 @@ class QueueService:
         # Check blocklist
         if self._is_blocked(song):
             raise SongBlockedError()
+
+        # Check maximum song length (0 = no limit)
+        max_seconds = self.settings.max_song_duration_seconds
+        if max_seconds and song.duration_ms and song.duration_ms > max_seconds * 1000:
+            raise SongTooLongError(song.duration_ms // 1000, max_seconds)
 
         # Check cooldown
         if not bypass_cooldown:
@@ -267,6 +291,36 @@ class QueueService:
                 return removed
         return None
 
+    def cancel_user_request(self, username: str):
+        """
+        Cancel a user's own most recent queued request.
+
+        Removes it from the queue, marks it for auto-skip when Spotify
+        reaches it, clears the user's cooldown, and allows the song to be
+        requested again (the wrong-song case).
+
+        Returns:
+            The canceled SongRequest, or None if the user has none queued
+        """
+        username = username.lower()
+        for i in range(len(self.state.queue) - 1, -1, -1):
+            if self.state.queue[i].requester.lower() == username:
+                removed = self.state.queue.pop(i)
+                self.canceled_song_ids.add(removed.song.spotify_id)
+                self.state.played_song_ids.discard(removed.song.spotify_id)
+                self.cooldowns.clear_user(username)
+                logger.info(f"Canceled request: '{removed.song.title}' by {username}")
+                return removed
+        return None
+
+    def forgive_request(self, request) -> None:
+        """
+        Let a song be requested again and clear its requester's cooldown.
+        Used when the requester cancels their currently playing song.
+        """
+        self.state.played_song_ids.discard(request.song.spotify_id)
+        self.cooldowns.clear_user(request.requester)
+
     def clear_queue(self) -> int:
         """
         Clear all songs from queue.
@@ -309,22 +363,24 @@ class QueueService:
             logger.debug(f"{username} liked the current song")
             return True
 
-    def add_skip_vote(self, username: str) -> Tuple[bool, bool]:
+    def add_skip_vote(self, username: str, weight: int = 1) -> Tuple[bool, bool]:
         """
         Add a skip vote to the current song (works for both requests and regular playback).
 
         Args:
             username: Twitch username
+            weight: How many votes this counts for (mods count extra)
 
         Returns:
             Tuple of (vote_added, should_skip)
         """
         username = username.lower()
+        weight = max(1, weight)
         current = self.state.current_request
 
         if current:
             # Use request's vote tracking
-            added = current.add_skip_vote(username)
+            added = current.add_skip_vote(username, weight)
             if added:
                 logger.debug(
                     f"{username} voted to skip '{current.song.title}' "
@@ -336,8 +392,8 @@ class QueueService:
             # Use standalone vote tracking for non-request songs
             if username in self._standalone_skips:
                 return False, False
-            self._standalone_skips.add(username)
-            skip_count = len(self._standalone_skips)
+            self._standalone_skips[username] = weight
+            skip_count = sum(self._standalone_skips.values())
             logger.debug(f"{username} voted to skip ({skip_count}/{self.settings.skip_threshold})")
             should_skip = skip_count >= self.settings.skip_threshold
             return True, should_skip
@@ -353,7 +409,7 @@ class QueueService:
         if current:
             return current.like_count, current.skip_count
         else:
-            return len(self._standalone_likes), len(self._standalone_skips)
+            return len(self._standalone_likes), sum(self._standalone_skips.values())
 
     def reset_votes(self) -> None:
         """
@@ -397,6 +453,13 @@ class QueueService:
     def get_queue_snapshot(self) -> List[dict]:
         """Get simplified queue for display."""
         return self.state.get_queue_snapshot()
+
+    def get_pending_duration_ms(self, before_position: int) -> int:
+        """Total duration of queued songs ahead of a 1-based queue position."""
+        return sum(
+            r.song.duration_ms or 0
+            for r in self.state.queue[: max(0, before_position - 1)]
+        )
 
     def get_next_preview(self) -> Optional[dict]:
         """Get preview of next song."""

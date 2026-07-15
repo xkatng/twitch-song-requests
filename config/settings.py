@@ -115,6 +115,61 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
+    # Skip Poll Settings
+    # -------------------------------------------------------------------------
+    poll_enabled: bool = Field(
+        default=True,
+        description="Create a Twitch poll to decide skips (Affiliate/Partner only)"
+    )
+    poll_duration_seconds: int = Field(
+        default=60,
+        ge=15,
+        le=1800,
+        description="How long the skip poll runs (Twitch allows 15-1800s)"
+    )
+    poll_trigger_votes: int = Field(
+        default=2,
+        ge=1,
+        le=100,
+        description="Number of !pass votes that triggers the skip poll"
+    )
+    poll_auto_start_seconds: int = Field(
+        default=30,
+        ge=0,
+        le=600,
+        description="Seconds into a requested song before the skip poll starts automatically (0 = only !pass votes trigger polls)"
+    )
+    poll_min_skip_votes: int = Field(
+        default=4,
+        ge=1,
+        le=100,
+        description="Minimum Skip votes a poll needs to actually skip (majority alone is not enough)"
+    )
+    poll_landslide_percent: int = Field(
+        default=70,
+        ge=0,
+        le=100,
+        description="End the poll early and skip when Skip has this % of votes and the minimum is met (0 = never end early)"
+    )
+    poll_instant_skip_votes: int = Field(
+        default=6,
+        ge=0,
+        le=100,
+        description="End the poll and skip the moment Skip reaches this many votes, regardless of percentage (0 = off)"
+    )
+    mod_pass_weight: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description="How many votes a moderator's !pass counts for in the internal tally (1 = same as everyone)"
+    )
+    max_song_duration_seconds: int = Field(
+        default=300,
+        ge=0,
+        description="Maximum requested song length in seconds (0 = no limit)"
+    )
+
+    # -------------------------------------------------------------------------
     # Blocklist (stored as comma-separated strings in .env)
     # -------------------------------------------------------------------------
     blocklist_artists: str = Field(
@@ -175,6 +230,15 @@ class RuntimeSettings:
         self.max_queue_size = base_settings.max_queue_size
         self.cooldown_seconds = base_settings.cooldown_seconds
         self.skip_threshold = base_settings.skip_threshold
+        self.poll_enabled = base_settings.poll_enabled
+        self.poll_duration_seconds = base_settings.poll_duration_seconds
+        self.poll_trigger_votes = base_settings.poll_trigger_votes
+        self.poll_auto_start_seconds = base_settings.poll_auto_start_seconds
+        self.poll_min_skip_votes = base_settings.poll_min_skip_votes
+        self.poll_landslide_percent = base_settings.poll_landslide_percent
+        self.poll_instant_skip_votes = base_settings.poll_instant_skip_votes
+        self.mod_pass_weight = base_settings.mod_pass_weight
+        self.max_song_duration_seconds = base_settings.max_song_duration_seconds
         self.blocklist_artists = list(base_settings.blocklist_artists_list)
         self.blocklist_song_ids = list(base_settings.blocklist_song_ids_list)
 
@@ -183,6 +247,15 @@ class RuntimeSettings:
         max_queue_size: Optional[int] = None,
         cooldown_seconds: Optional[int] = None,
         skip_threshold: Optional[int] = None,
+        poll_enabled: Optional[bool] = None,
+        poll_duration_seconds: Optional[int] = None,
+        poll_trigger_votes: Optional[int] = None,
+        poll_auto_start_seconds: Optional[int] = None,
+        poll_min_skip_votes: Optional[int] = None,
+        poll_landslide_percent: Optional[int] = None,
+        poll_instant_skip_votes: Optional[int] = None,
+        mod_pass_weight: Optional[int] = None,
+        max_song_duration_seconds: Optional[int] = None,
     ) -> dict:
         """Update runtime settings and return the new values."""
         if max_queue_size is not None:
@@ -191,6 +264,24 @@ class RuntimeSettings:
             self.cooldown_seconds = max(0, min(3600, cooldown_seconds))
         if skip_threshold is not None:
             self.skip_threshold = max(1, min(100, skip_threshold))
+        if poll_enabled is not None:
+            self.poll_enabled = poll_enabled
+        if poll_duration_seconds is not None:
+            self.poll_duration_seconds = max(15, min(1800, poll_duration_seconds))
+        if poll_trigger_votes is not None:
+            self.poll_trigger_votes = max(1, min(100, poll_trigger_votes))
+        if poll_auto_start_seconds is not None:
+            self.poll_auto_start_seconds = max(0, min(600, poll_auto_start_seconds))
+        if poll_min_skip_votes is not None:
+            self.poll_min_skip_votes = max(1, min(100, poll_min_skip_votes))
+        if poll_landslide_percent is not None:
+            self.poll_landslide_percent = max(0, min(100, poll_landslide_percent))
+        if poll_instant_skip_votes is not None:
+            self.poll_instant_skip_votes = max(0, min(100, poll_instant_skip_votes))
+        if mod_pass_weight is not None:
+            self.mod_pass_weight = max(1, min(10, mod_pass_weight))
+        if max_song_duration_seconds is not None:
+            self.max_song_duration_seconds = max(0, max_song_duration_seconds)
 
         return self.to_dict()
 
@@ -218,6 +309,15 @@ class RuntimeSettings:
             "max_queue_size": self.max_queue_size,
             "cooldown_seconds": self.cooldown_seconds,
             "skip_threshold": self.skip_threshold,
+            "poll_enabled": self.poll_enabled,
+            "poll_duration_seconds": self.poll_duration_seconds,
+            "poll_trigger_votes": self.poll_trigger_votes,
+            "poll_auto_start_seconds": self.poll_auto_start_seconds,
+            "poll_min_skip_votes": self.poll_min_skip_votes,
+            "poll_landslide_percent": self.poll_landslide_percent,
+            "poll_instant_skip_votes": self.poll_instant_skip_votes,
+            "mod_pass_weight": self.mod_pass_weight,
+            "max_song_duration_seconds": self.max_song_duration_seconds,
             "blocklist_artists": self.blocklist_artists,
             "blocklist_song_ids": self.blocklist_song_ids,
         }

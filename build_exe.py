@@ -87,9 +87,11 @@ echo.
 echo Dashboard: http://localhost:5174/dashboard
 echo Overlay:   http://localhost:5174/overlay
 echo.
+echo The dashboard will open in your browser automatically.
 echo Press Ctrl+C to stop the server.
 echo ============================================================
 echo.
+start "" /min cmd /c "timeout /t 6 /nobreak >nul & start "" http://localhost:5174/dashboard"
 TwitchSongRequests.exe
 pause
 ''')
@@ -118,16 +120,50 @@ FIRST TIME SETUP:
 
 CHAT COMMANDS:
 --------------
-Everyone:
+Everyone (votes are counted silently - no chat replies):
   !like          - Like the current song
   !pass          - Vote to skip the current song
   !song          - Show current song info
   !lastsong      - Show the previous song
   !queue         - Show the song queue
+  !cancel        - Cancel your own request (wrong song? changed your mind?)
+  !musicrats     - Top 5 most praised requesters (all-time likes)
 
 Mods Only:
-  !forceskip     - Force skip the current song
+  !skip          - Force skip the current song (also !forceskip, !fs)
   !clearqueue    - Clear the entire queue
+  !request       - Queue a song without channel points (testing)
+
+SKIP POLLS:
+-----------
+30 seconds into every requested song (POLL_AUTO_START_SECONDS), the
+bot creates a native Twitch poll: "Skip: Song?" with Keep it /
+Skip it choices. Poll votes are anonymous.
+
+Skipping requires BOTH a majority AND at least POLL_MIN_SKIP_VOTES
+(default 4) Skip votes - quiet polls mean the song plays on.
+The moment Skip reaches POLL_INSTANT_SKIP_VOTES (default 6), the
+poll ends and the song skips immediately - no percentage needed.
+If Skip reaches POLL_LANDSLIDE_PERCENT (default 70%) of votes with
+the minimum met, the poll also ends early.
+All poll settings are adjustable live from the Dashboard.
+
+A moderator's !pass counts as MOD_PASS_WEIGHT (default 3) votes in
+the internal tally (never announced in chat). Polls only ever run
+for requested songs - playlist songs use the !pass threshold.
+Requires Twitch Affiliate/Partner. Configure in .env:
+POLL_ENABLED, POLL_DURATION_SECONDS, POLL_TRIGGER_VOTES,
+POLL_AUTO_START_SECONDS, POLL_MIN_SKIP_VOTES,
+POLL_LANDSLIDE_PERCENT, MOD_PASS_WEIGHT
+
+SONG LIMITS:
+------------
+Requests longer than 5 minutes (MAX_SONG_DURATION_SECONDS) are
+rejected with a chat message and the points are refunded when
+possible. Set to 0 for no limit.
+
+NOTE: The first launch after adding polls opens the Twitch
+authorization page once - approve it to grant poll permissions.
 
 CHANNEL POINTS:
 ---------------

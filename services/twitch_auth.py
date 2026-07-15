@@ -29,6 +29,9 @@ TWITCH_SCOPES = [
     "user:write:chat",
     "user:bot",
     "channel:bot",
+    # Skip-poll feature (Affiliate/Partner only)
+    "channel:manage:polls",
+    "channel:read:polls",
 ]
 
 # For checking if token has required scopes

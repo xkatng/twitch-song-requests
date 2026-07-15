@@ -45,6 +45,10 @@ class CooldownTracker:
         """Record that a user made a request."""
         self.last_request_times[username.lower()] = datetime.now()
 
+    def clear_user(self, username: str) -> None:
+        """Clear a single user's cooldown (e.g. after they cancel a request)."""
+        self.last_request_times.pop(username.lower(), None)
+
     def clear(self) -> None:
         """Clear all cooldowns (e.g., for new session)."""
         self.last_request_times.clear()

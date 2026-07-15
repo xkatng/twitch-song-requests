@@ -4,7 +4,7 @@ Song and SongRequest data models.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Set
+from typing import Dict, Optional, Set
 
 
 @dataclass
@@ -68,7 +68,7 @@ class SongRequest:
     requester: str  # Twitch username
     requested_at: datetime = field(default_factory=datetime.now)
     likes: Set[str] = field(default_factory=set)  # Usernames who liked
-    skip_votes: Set[str] = field(default_factory=set)  # Usernames who voted skip
+    skip_votes: Dict[str, int] = field(default_factory=dict)  # Username -> vote weight (mods count extra)
     source: str = "channel_points"  # Always channel_points per requirements
 
     @property
@@ -78,8 +78,8 @@ class SongRequest:
 
     @property
     def skip_count(self) -> int:
-        """Number of skip votes."""
-        return len(self.skip_votes)
+        """Total skip vote weight (a mod's vote can count for more than 1)."""
+        return sum(self.skip_votes.values())
 
     def add_like(self, username: str) -> bool:
         """
@@ -92,15 +92,15 @@ class SongRequest:
         self.likes.add(username)
         return True
 
-    def add_skip_vote(self, username: str) -> bool:
+    def add_skip_vote(self, username: str, weight: int = 1) -> bool:
         """
-        Add a skip vote from a user.
+        Add a skip vote from a user, worth `weight` votes.
         Returns True if this is a new vote, False if already voted.
         """
         username = username.lower()
         if username in self.skip_votes:
             return False
-        self.skip_votes.add(username)
+        self.skip_votes[username] = max(1, weight)
         return True
 
     def should_skip(self, threshold: int) -> bool:

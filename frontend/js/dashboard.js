@@ -24,6 +24,14 @@ class DashboardController {
             skipThreshold: document.getElementById('skip-threshold'),
             requestCooldown: document.getElementById('request-cooldown'),
             maxQueueSize: document.getElementById('max-queue-size'),
+            maxSongDuration: document.getElementById('max-song-duration'),
+            pollForm: document.getElementById('poll-form'),
+            pollEnabled: document.getElementById('poll-enabled'),
+            pollAutoStart: document.getElementById('poll-auto-start'),
+            pollDuration: document.getElementById('poll-duration'),
+            pollMinSkips: document.getElementById('poll-min-skips'),
+            pollInstantSkips: document.getElementById('poll-instant-skips'),
+            pollLandslide: document.getElementById('poll-landslide'),
             blocklistInput: document.getElementById('blocklist-input'),
             addBlocklistBtn: document.getElementById('add-blocklist-btn'),
             blocklist: document.getElementById('blocklist'),
@@ -53,7 +61,20 @@ class DashboardController {
         this.elements.skipBtn.addEventListener('click', () => this.skipSong());
         this.elements.clearQueueBtn.addEventListener('click', () => this.clearQueue());
         this.elements.settingsForm.addEventListener('submit', (e) => this.saveSettings(e));
+        this.elements.pollForm.addEventListener('submit', (e) => this.savePollSettings(e));
         this.elements.addBlocklistBtn.addEventListener('click', () => this.addToBlocklist());
+
+        // Live labels for the sliders
+        this.bindSliderLabel(this.elements.maxSongDuration, 'max-song-duration-value',
+            (v) => v == 0 ? 'No limit' : `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`);
+        this.bindSliderLabel(this.elements.pollAutoStart, 'poll-auto-start-value',
+            (v) => v == 0 ? 'Off (manual)' : `${v}s`);
+        this.bindSliderLabel(this.elements.pollDuration, 'poll-duration-value', (v) => `${v}s`);
+        this.bindSliderLabel(this.elements.pollMinSkips, 'poll-min-skips-value', (v) => `${v}`);
+        this.bindSliderLabel(this.elements.pollInstantSkips, 'poll-instant-skips-value',
+            (v) => v == 0 ? 'Off' : `${v} votes`);
+        this.bindSliderLabel(this.elements.pollLandslide, 'poll-landslide-value',
+            (v) => v == 0 ? 'Off' : `${v}%`);
 
         // Enter key for blocklist input
         this.elements.blocklistInput.addEventListener('keypress', (e) => {
@@ -211,10 +232,29 @@ class DashboardController {
         `).join('');
     }
 
+    bindSliderLabel(slider, labelId, format) {
+        const label = document.getElementById(labelId);
+        const render = () => { label.textContent = format(parseInt(slider.value)); };
+        slider.addEventListener('input', render);
+        slider._renderLabel = render;
+    }
+
+    setSlider(slider, value) {
+        slider.value = value;
+        if (slider._renderLabel) slider._renderLabel();
+    }
+
     updateSettingsForm(settings) {
         this.elements.skipThreshold.value = settings.skip_threshold || 5;
         this.elements.requestCooldown.value = settings.cooldown_seconds || 300;
         this.elements.maxQueueSize.value = settings.max_queue_size || 10;
+        this.setSlider(this.elements.maxSongDuration, settings.max_song_duration_seconds ?? 300);
+        this.elements.pollEnabled.checked = settings.poll_enabled ?? true;
+        this.setSlider(this.elements.pollAutoStart, settings.poll_auto_start_seconds ?? 30);
+        this.setSlider(this.elements.pollDuration, settings.poll_duration_seconds ?? 60);
+        this.setSlider(this.elements.pollMinSkips, settings.poll_min_skip_votes ?? 4);
+        this.setSlider(this.elements.pollInstantSkips, settings.poll_instant_skip_votes ?? 6);
+        this.setSlider(this.elements.pollLandslide, settings.poll_landslide_percent ?? 70);
     }
 
     updateBlocklist(blocklist) {
@@ -283,6 +323,7 @@ class DashboardController {
                 skip_threshold: parseInt(this.elements.skipThreshold.value),
                 cooldown_seconds: parseInt(this.elements.requestCooldown.value),
                 max_queue_size: parseInt(this.elements.maxQueueSize.value),
+                max_song_duration_seconds: parseInt(this.elements.maxSongDuration.value),
             };
 
             await this.apiPatch('/settings', settings);
@@ -290,6 +331,27 @@ class DashboardController {
         } catch (e) {
             console.error('Save settings failed:', e);
             this.showAlert('Failed to save settings', 'error');
+        }
+    }
+
+    async savePollSettings(e) {
+        e.preventDefault();
+
+        try {
+            const settings = {
+                poll_enabled: this.elements.pollEnabled.checked,
+                poll_auto_start_seconds: parseInt(this.elements.pollAutoStart.value),
+                poll_duration_seconds: parseInt(this.elements.pollDuration.value),
+                poll_min_skip_votes: parseInt(this.elements.pollMinSkips.value),
+                poll_instant_skip_votes: parseInt(this.elements.pollInstantSkips.value),
+                poll_landslide_percent: parseInt(this.elements.pollLandslide.value),
+            };
+
+            await this.apiPatch('/settings', settings);
+            this.showAlert('Poll settings saved!', 'success');
+        } catch (e) {
+            console.error('Save poll settings failed:', e);
+            this.showAlert('Failed to save poll settings', 'error');
         }
     }
 
