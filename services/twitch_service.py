@@ -608,11 +608,13 @@ class ChatComponent(commands.Component):
                 return False
 
             if not user_input:
+                # Refund quietly - the "please include a song name" reply is
+                # reserved for !request/!sr without arguments
                 refunded = await resolve_redemption(False)
-                msg = f"@{user_name} please include a song name or Spotify link in the redemption."
-                if refunded:
-                    msg += " Your points have been refunded."
-                await self.bot.send_message(msg)
+                logger.warning(
+                    f"Empty redemption from {user_name} - "
+                    f"{'refunded' if refunded else 'refund failed'}"
+                )
                 return
 
             if not self.bot.on_song_request_callback:
@@ -706,7 +708,7 @@ class ChatComponent(commands.Component):
         """
         Vote to like the current song.
 
-        Votes are counted silently (overlay + end-of-song summary show totals)
+        Votes are counted silently (the overlay shows totals)
         to keep chat clean and avoid singling out voters.
         """
         if self.bot.on_like_callback:

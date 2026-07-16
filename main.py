@@ -519,23 +519,15 @@ async def handle_poll_end(payload) -> None:
     settings = app_state.runtime_settings
     min_skips = settings.poll_min_skip_votes
     instant_hit = settings.poll_instant_skip_votes and skip_votes >= settings.poll_instant_skip_votes
+    # No chat message either way - the native Twitch poll already shows the
+    # result, so the bot acts silently
     if instant_hit or (skip_votes > keep_votes and skip_votes >= min_skips):
-        await app_state.twitch.send_message(
-            f'⏭️ Chat voted to skip "{poll["label"]}" ({skip_votes}–{keep_votes})'
-        )
-        # Clear votes so the end-of-song summary doesn't repeat the result
+        logger.info(f'Poll skip: "{poll["label"]}" ({skip_votes}-{keep_votes})')
         app_state.queue.reset_votes()
         await broadcast_vote_update()
         await skip_current_song()
     else:
-        if skip_votes > keep_votes:
-            msg = (
-                f'🎶 "{poll["label"]}" stays! Skips led {skip_votes}–{keep_votes} '
-                f'but {min_skips} skip votes are needed.'
-            )
-        else:
-            msg = f'🎶 "{poll["label"]}" stays! ({keep_votes}–{skip_votes})'
-        await app_state.twitch.send_message(msg)
+        logger.info(f'Poll keep: "{poll["label"]}" ({keep_votes}-{skip_votes})')
         app_state.queue.reset_votes()
         await broadcast_vote_update()
 
@@ -657,7 +649,6 @@ async def playback_monitor_loop():
     logger.info("Starting playback monitor...")
 
     last_track_id = None
-    last_song_label = None  # "Title — Artist" of the previous song, for the summary
 
     while True:
         try:
@@ -685,14 +676,6 @@ async def playback_monitor_loop():
                     app_state.spotify.skip_track()
                     continue
 
-                # Post a vote summary for the song that just ended (counts only,
-                # never names) - skipped when nobody voted to avoid chat noise
-                likes, skips = app_state.queue.get_vote_counts()
-                if last_song_label and (likes or skips) and app_state.twitch:
-                    await app_state.twitch.send_message(
-                        f'📊 "{last_song_label}" — 👍 {likes} · ⏭️ {skips}'
-                    )
-
                 # End any skip poll left over from the previous song. The
                 # poll.end handler ignores it because active_poll is cleared.
                 if app_state.active_poll and app_state.active_poll["track_id"] != current_track_id:
@@ -703,7 +686,6 @@ async def playback_monitor_loop():
 
                 last_track_id = current_track_id
                 artist_str = ", ".join(a["name"] for a in current_track.get("artists", []))
-                last_song_label = f"{current_track.get('name', 'Unknown')} — {artist_str}"
                 logger.info(f"Track changed: {current_track.get('name', 'Unknown')}")
 
                 # Update the Twitch service with the new song (for !lastsong command)

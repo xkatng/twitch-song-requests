@@ -16,7 +16,7 @@ A complete song request system for Twitch streams with Spotify integration, Chan
 - **`!cancel`** - Requesters can cancel their own song (wrong song? changed your mind?) with cooldown reset
 - **Music Rats Leaderboard** - `!musicrats` shows the all-time most praised requesters, tracked across streams
 - **Song Length Limit** - Requests over a configurable duration (default 5 min) are rejected with a friendly message
-- **Silent Voting** - `!like`/`!pass` are counted without chat replies; one summary posts when the song ends
+- **Silent Voting** - `!like`/`!pass` are counted without chat replies; totals show on the overlay
 - **Real-time OBS Overlay** - Compact overlay with album art, progress bar, and vote counts
 - **Web Dashboard** - Manage queue, poll settings (with sliders), and blocklist live from your browser
 - **Auto-Resume** - Returns to your playlist when the request queue empties
