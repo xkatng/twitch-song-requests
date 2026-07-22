@@ -956,6 +956,53 @@ app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="asset
 
 
 # =============================================================================
+# Spotify OAuth Callback
+# =============================================================================
+
+@app.get("/auth/spotify/callback")
+async def spotify_oauth_callback(code: str = None, error: str = None):
+    """
+    Handle Spotify OAuth callback.
+
+    Needed for re-authentication while the server is running (e.g. after
+    Spotify revokes a refresh token): spotipy's own one-shot local server
+    can't bind our port, so the redirect lands here instead.
+    """
+    if error or not code:
+        logger.error(f"Spotify OAuth error: {error or 'missing code'}")
+        return HTMLResponse(f"""
+            <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                <h1>❌ Spotify Authentication Failed</h1>
+                <p>Error: {error or 'missing authorization code'}</p>
+                <p>Please close this window and try again.</p>
+            </body></html>
+        """)
+
+    try:
+        auth_manager = app_state.spotify.sp.auth_manager
+        # Exchanges the code and writes .spotify_cache; the running client
+        # picks the new token up on its next request automatically
+        auth_manager.get_access_token(code, as_dict=False)
+        app_state.spotify.store_current_context()
+        logger.info("Spotify OAuth successful - token cached")
+        return HTMLResponse("""
+            <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                <h1>✅ Spotify Connected!</h1>
+                <p>You can close this window. The bot will resume automatically.</p>
+            </body></html>
+        """)
+    except Exception as e:
+        logger.error(f"Spotify OAuth token exchange failed: {e}")
+        return HTMLResponse(f"""
+            <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                <h1>❌ Spotify Token Exchange Failed</h1>
+                <p>{e}</p>
+                <p>Close this window and restart the bot to retry.</p>
+            </body></html>
+        """)
+
+
+# =============================================================================
 # Twitch OAuth Callback
 # =============================================================================
 
