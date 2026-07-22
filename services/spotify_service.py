@@ -3,11 +3,25 @@ Spotify API integration service.
 Handles OAuth, playback control, search, and device management.
 """
 
+import os
 import re
+import sys
 import logging
 from typing import Optional, List
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+
+
+def _cache_path() -> str:
+    """
+    Absolute path for the Spotify token cache, anchored to the exe (frozen)
+    or the project root (source) so it never depends on the launch directory.
+    """
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, ".spotify_cache")
 
 from models.song import Song
 from config.settings import Settings
@@ -65,7 +79,7 @@ class SpotifyService:
             client_secret=self.settings.spotify_client_secret,
             redirect_uri=self.settings.spotify_redirect_uri,
             scope=self.SCOPES,
-            cache_path=".spotify_cache",
+            cache_path=_cache_path(),
             open_browser=True,
         )
         self.sp = spotipy.Spotify(auth_manager=auth_manager)
